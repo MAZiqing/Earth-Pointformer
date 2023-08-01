@@ -16,6 +16,11 @@ import os
 import argparse
 from einops import rearrange
 from pytorch_lightning import Trainer, seed_everything
+import os
+import sys
+path = os.getcwd()
+print(path)
+sys.path.insert(0, os.path.join(path, 'src'))
 from earthformer.config import cfg
 from earthformer.utils.optim import SequentialLR, warmup_lambda
 from earthformer.utils.utils import get_parameter_names
