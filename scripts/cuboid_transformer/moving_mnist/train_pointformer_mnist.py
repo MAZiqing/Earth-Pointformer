@@ -28,7 +28,7 @@ from earthformer.utils.layout import layout_to_in_out_slice
 from earthformer.visualization.nbody import save_example_vis_results
 from earthformer.cuboid_transformer.cuboid_transformer import CuboidTransformerModel
 from earthformer.datasets.moving_mnist.moving_mnist import MovingMNISTDataModule
-# from earthformer.utils.apex_ddp import ApexDDPStrategy
+from earthformer.utils.apex_ddp import ApexDDPStrategy
 from earthformer.pointformer.PointFormer import Model
 
 _curr_dir = os.path.realpath(os.path.dirname(os.path.realpath(__file__)))
@@ -512,6 +512,7 @@ class CuboidMovingMNISTPLModule(pl.LightningModule):
                     plot_stride=1,
                     label=self.oc.logging.logging_prefix)
 
+
 def get_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--save', default='tmp_mnist', type=str)
@@ -521,6 +522,7 @@ def get_parser():
     parser.add_argument('--ckpt_name', default=None, type=str,
                         help='The model checkpoint trained on N-body MovingMNIST.')
     return parser
+
 
 def main():
     parser = get_parser()
