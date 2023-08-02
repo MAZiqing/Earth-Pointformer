@@ -9,15 +9,21 @@ import torch.nn.functional as F
 from einops import repeat, rearrange
 from torch import optim
 
-from .Embed_PointFormer import DataEmbedding
+try:
+    from .Embed_PointFormer import DataEmbedding
+    from .multihead_point_transformer_pytorch import MultiheadPointTransformerLayer
+    from .SVDFormer import SVDTransformer, FullAttention, GlobalSVD, GlobalConv
+except:
+    from src.earthformer.pointformer.Embed_PointFormer import DataEmbedding
+    from src.earthformer.pointformer.multihead_point_transformer_pytorch import MultiheadPointTransformerLayer
+    from src.earthformer.pointformer.SVDFormer import SVDTransformer, FullAttention, GlobalSVD, GlobalConv
 # from layers.Causal_Conv import CausalConv
 # from layers.Multi_Correlation import AutoCorrelation, AutoCorrelationLayer, CrossCorrelation, CrossCorrelationLayer, \
 #     MultiCorrelation
 # from layers.Corrformer_EncDec import Encoder, Decoder, EncoderLayer, DecoderLayer, \
 #     my_Layernorm, series_decomp
 
-from .multihead_point_transformer_pytorch import MultiheadPointTransformerLayer
-from .SVDFormer import SVDTransformer, FullAttention, GlobalSVD, GlobalConv
+
 from collections import namedtuple
 
 
@@ -269,7 +275,8 @@ class Model(nn.Module):
     def __init__(self, configs):
         super(Model, self).__init__()
 
-        configs = namedtuple('Struct', configs.keys())(*configs.values())
+        if isinstance(configs, dict):
+            configs = namedtuple('Struct', configs.keys())(*configs.values())
         # device = configs.device
         device = DEVICE
         self.verbose = configs.verbose
@@ -322,9 +329,13 @@ class Model(nn.Module):
 
         self.mlp_out = nn.Linear(D, configs.c_out)
 
-    def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec,
-                enc_self_mask=None, dec_self_mask=None, dec_enc_mask=None):
+    def forward(self, x_enc): #, x_mark_enc, x_dec, x_mark_dec,
+                # enc_self_mask=None, dec_self_mask=None, dec_enc_mask=None):
         B, T, H, W, C = x_enc.shape
+        x_mark_enc = repeat(torch.arange(0, 10).unsqueeze(-1), 'l d -> b l d', b=B)
+        x_mark_dec = repeat(torch.arange(10, 20).unsqueeze(-1), 'l d -> b l d', b=B)
+        x_dec = repeat(x_enc.mean(dim=1), 'b h w d -> b t h w d', t=self.pred_len).detach()
+
         if self.verbose:
             a = x_enc
             g = self.enc_embedding.enc_embedding.token_embedding.embed.weight.grad
@@ -375,7 +386,7 @@ class Model(nn.Module):
 if __name__ == '__main__':
     class Configs(object):
         seq_len = 10
-        pred_len = 13
+        pred_len = 10
         height = 32
         width = 32
         c_in = 3
@@ -407,7 +418,9 @@ if __name__ == '__main__':
         dec_x = torch.randn(B, *output_shape)
         dec_x_mark = torch.ones(B, configs.pred_len, 1).long()
 
-        out = model.forward(input_x, input_x_mark, dec_x, dec_x_mark)
+        # out = model.forward(input_x, input_x_mark, dec_x, dec_x_mark)
+        out = model.forward(input_x)
+        # out = model.forward(input_x, input_x_mark, dec_x, dec_x_mark)
 
         target = torch.randn(out.shape)
         criterion = nn.MSELoss()
