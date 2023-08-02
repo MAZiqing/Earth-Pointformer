@@ -332,9 +332,9 @@ class Model(nn.Module):
     def forward(self, x_enc): #, x_mark_enc, x_dec, x_mark_dec,
                 # enc_self_mask=None, dec_self_mask=None, dec_enc_mask=None):
         B, T, H, W, C = x_enc.shape
-        x_mark_enc = repeat(torch.arange(0, 10).unsqueeze(-1), 'l d -> b l d', b=B)
-        x_mark_dec = repeat(torch.arange(10, 20).unsqueeze(-1), 'l d -> b l d', b=B)
-        x_dec = repeat(x_enc.mean(dim=1), 'b h w d -> b t h w d', t=self.pred_len).detach()
+        x_mark_enc = repeat(torch.arange(0, 10).unsqueeze(-1), 'l d -> b l d', b=B).to(x_enc.device)
+        x_mark_dec = repeat(torch.arange(10, 20).unsqueeze(-1), 'l d -> b l d', b=B).to(x_enc.device)
+        x_dec = repeat(x_enc.mean(dim=1), 'b h w d -> b t h w d', t=self.pred_len).detach().to(x_enc.device)
 
         if self.verbose:
             a = x_enc
