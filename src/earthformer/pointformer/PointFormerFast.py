@@ -364,19 +364,19 @@ class Model(nn.Module):
         B, T, H8, W8, C = x_dec_divide8.shape
 
         x_dec_divide8 = torch.cat([x_divide8, x_dec_divide8], dim=1)
-        x_dec_divide8 = (self.attn_dec_divide8(x_dec_divide8) + x_dec_divide8)[:, -self.K:, ...]
+        x_dec_divide8 = (self.attn_dec_divide8(x_dec_divide8))[:, -self.K:, ...]
         x_dec_divide4 = self.upsample_divide8(x_dec_divide8)
 
         x_dec_divide4 = torch.cat([x_divide4, x_dec_divide4], dim=1)
-        x_dec_divide4 = (self.attn_dec_divide4(x_dec_divide4) + x_dec_divide4)[:, -self.K:, ...]
+        x_dec_divide4 = (self.attn_dec_divide4(x_dec_divide4))[:, -self.K:, ...]
         x_dec_divide2 = self.upsample_divide4(x_dec_divide4)
 
         x_dec_divide2 = torch.cat([x_divide2, x_dec_divide2], dim=1)
-        x_dec_divide2 = (self.attn_dec_divide2(x_dec_divide2) + x_dec_divide2)[:, -self.K:, ...]
+        x_dec_divide2 = (self.attn_dec_divide2(x_dec_divide2))[:, -self.K:, ...]
         x_dec_divide1 = self.upsample_divide2(x_dec_divide2)
 
         x_dec_divide1 = torch.cat([x, x_dec_divide1], dim=1)
-        x_dec_divide1 = (self.attn_dec(x_dec_divide1) + x_dec_divide1)[:, -self.K:, ...]
+        x_dec_divide1 = (self.attn_dec(x_dec_divide1))[:, -self.K:, ...]
 
         out = x_dec_divide1
         out = self.mlp_out(out)
