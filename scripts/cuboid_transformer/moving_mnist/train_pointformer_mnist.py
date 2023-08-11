@@ -29,7 +29,7 @@ from earthformer.visualization.nbody import save_example_vis_results
 from earthformer.cuboid_transformer.cuboid_transformer import CuboidTransformerModel
 from earthformer.datasets.moving_mnist.moving_mnist import MovingMNISTDataModule
 from earthformer.utils.apex_ddp import ApexDDPStrategy
-from earthformer.pointformer.PointFormer import Model
+from earthformer.pointformer.PointFormerFast import Model
 
 _curr_dir = os.path.realpath(os.path.dirname(os.path.realpath(__file__)))
 exps_dir = os.path.join(_curr_dir, "experiments")
