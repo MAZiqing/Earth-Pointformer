@@ -1,6 +1,7 @@
 import warnings
 from shutil import copyfile
 import inspect
+from datetime import datetime
 import numpy as np
 import torch
 from torch import nn
@@ -440,6 +441,7 @@ class CuboidMovingMNISTPLModule(pl.LightningModule):
         self.log('valid_mse_epoch', frame_mse, prog_bar=True, on_step=False, on_epoch=True)
         self.log('valid_mae_epoch', frame_mae, prog_bar=True, on_step=False, on_epoch=True)
         self.log('valid_ssim_epoch', epoch_ssim, prog_bar=True, on_step=False, on_epoch=True)
+        self.log('time', datetime.now(), prog_bar=True, on_step=False, on_epoch=True)
         self.valid_mse.reset()
         self.valid_mae.reset()
         self.valid_ssim.reset()
