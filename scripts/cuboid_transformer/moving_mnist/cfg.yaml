@@ -54,7 +54,7 @@ model:
   downsample_type: "patch_merge"
   upsample_type: "upsample"
 
-  num_global_vectors: 0
+  num_global_vectors: 6
   use_dec_self_global: false
   dec_self_update_global: true
   use_dec_cross_global: false

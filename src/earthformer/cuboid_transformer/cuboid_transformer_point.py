@@ -20,7 +20,7 @@ except:
     get_activation, get_norm_layer,
     _generalize_padding, _generalize_unpadding,
     apply_initialization, round_to)
-
+from natten import NeighborhoodAttention2D, NeighborhoodAttention1D #, NeighborhoodAttention3D
 
 
 class PosEmbed(nn.Module):
@@ -778,6 +778,9 @@ class CuboidSelfAttentionLayer(nn.Module):
                                                   in_channels=global_dim_ratio*dim)
 
         self.checkpoint_level = checkpoint_level
+
+        self.nattn = NeighborhoodAttention2D(dim=dim, kernel_size=7, dilation=1, num_heads=8)
+
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -836,10 +839,20 @@ class CuboidSelfAttentionLayer(nn.Module):
             shifted_x = x
         # Step-3: Reorder the tensor
         # (B, num_cuboids, cuboid_volume, C)
+
+        # ######## V1 #######################
+        shifted_x = rearrange(shifted_x, 'b t h w c -> (b t) h w c')
+        shifted_x = self.nattn(shifted_x)
+        shifted_x = rearrange(shifted_x, '(b t) h w c -> b t h w c', b=B)
+
         reordered_x = cuboid_reorder(shifted_x, cuboid_size=cuboid_size, strategy=self.strategy)
         _, num_cuboids, cuboid_volume, _ = reordered_x.shape
+        head_C = C_in // self.num_heads
+
         # Step-4: Perform self-attention
         # (num_cuboids, cuboid_volume, cuboid_volume)
+
+        # ########## Original Version ########
         attn_mask = compute_cuboid_self_attention_mask((T, H, W), cuboid_size,
                                                        shift_size=shift_size,
                                                        strategy=self.strategy,
@@ -851,7 +864,6 @@ class CuboidSelfAttentionLayer(nn.Module):
         q, k, v = qkv[0], qkv[1], qkv[2]  # Each has shape (B, num_heads, num_cuboids, cuboid_volume, head_C)
         q = q * self.scale
         attn_score = q @ k.transpose(-2, -1)  # Shape (B, num_heads, num_cuboids, cuboid_volume, cuboid_volume)
-
         if self.use_relative_pos:
             relative_position_bias = self.relative_position_bias_table[
                 self.relative_position_index[:cuboid_volume, :cuboid_volume].reshape(-1)]\

@@ -31,6 +31,7 @@ from earthformer.cuboid_transformer.cuboid_transformer import CuboidTransformerM
 from earthformer.datasets.moving_mnist.moving_mnist import MovingMNISTDataModule
 from earthformer.utils.apex_ddp import ApexDDPStrategy
 from earthformer.pointformer.PointFormerFast import Model
+from earthformer.cuboid_transformer.cuboid_transformer import CuboidTransformerModel
 
 _curr_dir = os.path.realpath(os.path.dirname(os.path.realpath(__file__)))
 exps_dir = os.path.join(_curr_dir, "experiments")
@@ -63,8 +64,64 @@ class CuboidMovingMNISTPLModule(pl.LightningModule):
         else:
             dec_cross_attn_patterns = OmegaConf.to_container(model_cfg["cross_pattern"])
 
-        self.torch_nn_module = Model(
-            configs=model_cfg["configs"]
+        # self.torch_nn_module = Model(
+        #     configs=model_cfg["configs"]
+        # )
+        self.torch_nn_module = CuboidTransformerModel(
+            input_shape=model_cfg["input_shape"],
+            target_shape=model_cfg["target_shape"],
+            base_units=model_cfg["base_units"],
+            block_units=model_cfg["block_units"],
+            scale_alpha=model_cfg["scale_alpha"],
+            enc_depth=model_cfg["enc_depth"],
+            dec_depth=model_cfg["dec_depth"],
+            enc_use_inter_ffn=model_cfg["enc_use_inter_ffn"],
+            dec_use_inter_ffn=model_cfg["dec_use_inter_ffn"],
+            dec_hierarchical_pos_embed=model_cfg["dec_hierarchical_pos_embed"],
+            downsample=model_cfg["downsample"],
+            downsample_type=model_cfg["downsample_type"],
+            enc_attn_patterns=enc_attn_patterns,
+            dec_self_attn_patterns=dec_self_attn_patterns,
+            dec_cross_attn_patterns=dec_cross_attn_patterns,
+            dec_cross_last_n_frames=model_cfg["dec_cross_last_n_frames"],
+            dec_use_first_self_attn=model_cfg["dec_use_first_self_attn"],
+            num_heads=model_cfg["num_heads"],
+            attn_drop=model_cfg["attn_drop"],
+            proj_drop=model_cfg["proj_drop"],
+            ffn_drop=model_cfg["ffn_drop"],
+            upsample_type=model_cfg["upsample_type"],
+            ffn_activation=model_cfg["ffn_activation"],
+            gated_ffn=model_cfg["gated_ffn"],
+            norm_layer=model_cfg["norm_layer"],
+            # global vectors
+            num_global_vectors=model_cfg["num_global_vectors"],
+            use_dec_self_global=model_cfg["use_dec_self_global"],
+            dec_self_update_global=model_cfg["dec_self_update_global"],
+            use_dec_cross_global=model_cfg["use_dec_cross_global"],
+            use_global_vector_ffn=model_cfg["use_global_vector_ffn"],
+            use_global_self_attn=model_cfg["use_global_self_attn"],
+            separate_global_qkv=model_cfg["separate_global_qkv"],
+            global_dim_ratio=model_cfg["global_dim_ratio"],
+            # initial_downsample
+            initial_downsample_type=model_cfg["initial_downsample_type"],
+            initial_downsample_activation=model_cfg["initial_downsample_activation"],
+            # initial_downsample_type=="conv"
+            initial_downsample_scale=model_cfg["initial_downsample_scale"],
+            initial_downsample_conv_layers=model_cfg["initial_downsample_conv_layers"],
+            final_upsample_conv_layers=model_cfg["final_upsample_conv_layers"],
+            # misc
+            padding_type=model_cfg["padding_type"],
+            z_init_method=model_cfg["z_init_method"],
+            checkpoint_level=model_cfg["checkpoint_level"],
+            pos_embed_type=model_cfg["pos_embed_type"],
+            use_relative_pos=model_cfg["use_relative_pos"],
+            self_attn_use_final_proj=model_cfg["self_attn_use_final_proj"],
+            # initialization
+            attn_linear_init_mode=model_cfg["attn_linear_init_mode"],
+            ffn_linear_init_mode=model_cfg["ffn_linear_init_mode"],
+            conv_init_mode=model_cfg["conv_init_mode"],
+            down_up_linear_init_mode=model_cfg["down_up_linear_init_mode"],
+            norm_init_mode=model_cfg["norm_init_mode"],
         )
 
         self.total_num_steps = total_num_steps
