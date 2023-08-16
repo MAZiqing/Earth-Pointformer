@@ -125,6 +125,7 @@ class CuboidMovingMNISTPLModule(pl.LightningModule):
         else:
             oc_from_file = None
         oc = self.get_base_config(oc_from_file=oc_from_file)
+        print(oc)
         self.save_hyperparameters(oc)
         self.oc = oc
         # layout

@@ -130,6 +130,7 @@ class CuboidMovingMNISTPLModule(pl.LightningModule):
         else:
             oc_from_file = None
         oc = self.get_base_config(oc_from_file=oc_from_file)
+        print(oc)
         self.save_hyperparameters(oc)
         self.oc = oc
         # layout
@@ -498,7 +499,7 @@ class CuboidMovingMNISTPLModule(pl.LightningModule):
         self.log('valid_mse_epoch', frame_mse, prog_bar=True, on_step=False, on_epoch=True)
         self.log('valid_mae_epoch', frame_mae, prog_bar=True, on_step=False, on_epoch=True)
         self.log('valid_ssim_epoch', epoch_ssim, prog_bar=True, on_step=False, on_epoch=True)
-        self.log('time', datetime.now(), prog_bar=True, on_step=False, on_epoch=True)
+        # self.log('time', str(datetime.now()), prog_bar=True, on_step=False, on_epoch=True)
         self.valid_mse.reset()
         self.valid_mae.reset()
         self.valid_ssim.reset()
