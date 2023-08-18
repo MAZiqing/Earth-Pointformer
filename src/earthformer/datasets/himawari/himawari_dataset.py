@@ -56,9 +56,9 @@ class HimawariDataset(data.Dataset):
 
     def __len__(self):
         if self.train:
-            return len(self.train_data)
+            return len(self.train_data) - 30
         else:
-            return len(self.test_data)
+            return len(self.test_data) - 30
 
     def __repr__(self):
         fmt_str = 'Dataset ' + self.__class__.__name__ + '\n'
