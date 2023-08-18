@@ -41,16 +41,17 @@ class HimawariDataset(data.Dataset):
         else:
             self.test_data = torch.tensor(np.load(
                 os.path.join(self.root, 'himawari_jiaxing_5km_2023.npy')))
+        a = 1
 
     def __getitem__(self, index):
 
         if self.train:
-            seq, target = self.train_data[index, :10], self.train_data[index, 10:]
+            seq, target = self.train_data[index: index+10], self.train_data[index+10: index+20]
         else:
-            seq, target = self.test_data[index, :10], self.test_data[index, 10:]
+            seq, target = self.test_data[index: index+10], self.test_data[index+10: index+20]
 
-        seq = (seq / 255.0).float()
-        target = (target / 255.0).float()
+        seq = seq.float()
+        target = target.float()
         return seq, target
 
     def __len__(self):
