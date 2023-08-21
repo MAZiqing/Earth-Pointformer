@@ -33,22 +33,22 @@ class HimawariDataset(data.Dataset):
         self.train = train  # training set or test set
 
         self.train_data = torch.tensor(np.load(
-            os.path.join(self.root, 'himawari_jiaxing_5km_2020.npy')))
+            os.path.join(self.root, 'himawari_day_jiaxing_5km_2020_2022.npy')))
 
         if self.train:
             self.train_data = torch.tensor(np.load(
-                os.path.join(self.root, 'himawari_jiaxing_5km_2020.npy')))
+                os.path.join(self.root, 'himawari_day_jiaxing_5km_2020_2022.npy')))
         else:
             self.test_data = torch.tensor(np.load(
-                os.path.join(self.root, 'himawari_jiaxing_5km_2023.npy')))
+                os.path.join(self.root, 'himawari_day_jiaxing_5km_2023.npy')))
         a = 1
 
     def __getitem__(self, index):
 
         if self.train:
-            seq, target = self.train_data[index: index+10], self.train_data[index+10: index+20]
+            seq, target = self.train_data[index], self.train_data[index+1]
         else:
-            seq, target = self.test_data[index: index+10], self.test_data[index+10: index+20]
+            seq, target = self.test_data[index], self.test_data[index+1]
 
         seq = seq.float()
         target = target.float()
@@ -56,9 +56,9 @@ class HimawariDataset(data.Dataset):
 
     def __len__(self):
         if self.train:
-            return len(self.train_data) - 30
+            return len(self.train_data) - 3
         else:
-            return len(self.test_data) - 30
+            return len(self.test_data) - 3
 
     def __repr__(self):
         fmt_str = 'Dataset ' + self.__class__.__name__ + '\n'
@@ -71,42 +71,6 @@ class HimawariDataset(data.Dataset):
         # tmp = '    Target Transforms (if any): '
         # fmt_str += '{0}{1}'.format(tmp, self.target_transform.__repr__().replace('\n', '\n' + ' ' * len(tmp)))
         return fmt_str
-
-#
-# class NearestInterpTransform:
-#     def __init__(self, target_thw, layout='THWC'):
-#         """
-#
-#         Parameters
-#         ----------
-#         target_thw
-#             The target shape with (T, H, W)
-#         """
-#         self.target_thw = target_thw
-#         self.layout = layout
-#
-#     def __call__(self, data):
-#         """
-#
-#         Parameters
-#         ----------
-#         data
-#             Shape (T, H, W) or (T, H, W, C)
-#
-#         Returns
-#         -------
-#         rescaled_data
-#             Shape (T, H, W, C)
-#             C will be 1 if the input data shape is (T, H, W)
-#         """
-#         if self.target_thw == data.shape:
-#             return data.view(*tuple(self.target_thw + (1,)))
-#         else:
-#             assert len(data.shape) == 3
-#             rescaled_data = F.interpolate(data.view((1, 1) + data.shape), self.target_thw, mode='nearest')
-#             rescaled_data = rescaled_data.view(self.target_thw + (1,))
-#             print('rescaled_data.shape=', rescaled_data.shape)
-#             return rescaled_data
 
 
 class HimawariDataModule(pl.LightningDataModule):
