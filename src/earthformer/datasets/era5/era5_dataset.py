@@ -13,6 +13,7 @@ import pytorch_lightning as pl
 from sklearn.model_selection import train_test_split
 from torch.utils.data import random_split, Subset, DataLoader
 from typing import Optional
+from torchvision import transforms
 
 
 class ERA5Dataset(data.Dataset):
@@ -31,17 +32,30 @@ class ERA5Dataset(data.Dataset):
         # self.post_target_transform = post_target_transform
         self.split = split
         self.train = train  # training set or test set
+        # transform = transforms.Normalize(mean=0.5, std=0.5)
+        # transform = torch.nn.functional.normalize()
 
         country = 'china'
         self.train_data = torch.tensor(np.load(
             os.path.join(self.root, country, 'CN_2020_2021.npy')))
+        shape = self.train_data.shape
+        self.train_data = self.train_data.reshape(-1, 7)
+        maxes = self.train_data.max(dim=0).values
+        mins = self.train_data.min(dim=0).values
+        self.train_data = ((self.train_data - mins) / (maxes - mins)).reshape(shape)
 
         if self.train:
             self.train_data = torch.tensor(np.load(
                 os.path.join(self.root, country, 'CN_2020_2021.npy')))
+            shape = self.train_data.shape
+            self.train_data = self.train_data.reshape(-1, 7)
+            self.train_data = ((self.train_data - mins) / (maxes - mins)).reshape(shape)
         else:
             self.test_data = torch.tensor(np.load(
                 os.path.join(self.root, country, 'CN_2022.npy')))
+            shape = self.test_data.shape
+            self.test_data = self.test_data.reshape(-1, 7)
+            self.test_data = ((self.test_data - mins) / (maxes - mins)).reshape(shape)
         a = 1
 
     def __getitem__(self, index):
