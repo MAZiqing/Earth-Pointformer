@@ -38,8 +38,8 @@ vis:
   test_example_data_idx_list: [0, ]
   eval_example_only: false
 model:
-  input_shape: [10, 64, 64, 4]
-  target_shape: [10, 64, 64, 4]
+  input_shape: [10, 128, 128, 7]
+  target_shape: [10, 128, 128, 7]
   base_units: 64
   # block_units: null
   scale_alpha: 1.0
@@ -54,7 +54,7 @@ model:
   downsample_type: "patch_merge"
   upsample_type: "upsample"
 
-  num_global_vectors: 6
+  num_global_vectors: 1
   use_dec_self_global: false
   dec_self_update_global: true
   use_dec_cross_global: false
