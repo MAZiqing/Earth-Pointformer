@@ -31,7 +31,8 @@ from earthformer.cuboid_transformer.cuboid_transformer import CuboidTransformerM
 from earthformer.datasets.moving_mnist.moving_mnist import MovingMNISTDataModule
 from earthformer.utils.apex_ddp import ApexDDPStrategy
 from earthformer.pointformer.PointFormerFast import Model
-from earthformer.cuboid_transformer.cuboid_transformer import CuboidTransformerModel
+# from earthformer.cuboid_transformer.cuboid_transformer import CuboidTransformerModel
+from earthformer.cuboid_transformer.cuboid_transformer_point import CuboidTransformerModel
 
 _curr_dir = os.path.realpath(os.path.dirname(os.path.realpath(__file__)))
 exps_dir = os.path.join(_curr_dir, "experiments")
