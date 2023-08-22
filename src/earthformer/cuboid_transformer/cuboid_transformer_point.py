@@ -20,7 +20,12 @@ except:
     get_activation, get_norm_layer,
     _generalize_padding, _generalize_unpadding,
     apply_initialization, round_to)
-from natten import NeighborhoodAttention2D, NeighborhoodAttention1D #, NeighborhoodAttention3D
+from natten import NeighborhoodAttention2D, NeighborhoodAttention1D
+try:
+    from natten import NeighborhoodAttention3D
+    natten3D_flag = True
+except:
+    natten3D_flag = False
 
 
 class PosEmbed(nn.Module):
@@ -780,6 +785,7 @@ class CuboidSelfAttentionLayer(nn.Module):
         self.checkpoint_level = checkpoint_level
 
         self.nattn = NeighborhoodAttention2D(dim=dim, kernel_size=7, dilation=1, num_heads=8)
+        self.nattn_tc = NeighborhoodAttention2D(dim=1, kernel_size=5, dilation=1, num_heads=1)
 
         self.reset_parameters()
 
@@ -817,165 +823,80 @@ class CuboidSelfAttentionLayer(nn.Module):
 
         B, T, H, W, C_in = x.shape
         assert C_in == self.dim
-        if self.use_global_vector:
-            _, num_global, _ = global_vectors.shape
-            global_vectors = self.global_vec_norm(global_vectors)
 
-        cuboid_size, shift_size = update_cuboid_size_shift_size((T, H, W), self.cuboid_size,
-                                                                self.shift_size, self.strategy)
-        # Step-1: Pad the input
-        pad_t = (cuboid_size[0] - T % cuboid_size[0]) % cuboid_size[0]
-        pad_h = (cuboid_size[1] - H % cuboid_size[1]) % cuboid_size[1]
-        pad_w = (cuboid_size[2] - W % cuboid_size[2]) % cuboid_size[2]
-
-        # We use generalized padding
-        x = _generalize_padding(x, pad_t, pad_h, pad_w, self.padding_type)
+        # cuboid_size, shift_size = update_cuboid_size_shift_size((T, H, W), self.cuboid_size,
+        #                                                         self.shift_size, self.strategy)
+        # # Step-1: Pad the input
+        # pad_t = (cuboid_size[0] - T % cuboid_size[0]) % cuboid_size[0]
+        # pad_h = (cuboid_size[1] - H % cuboid_size[1]) % cuboid_size[1]
+        # pad_w = (cuboid_size[2] - W % cuboid_size[2]) % cuboid_size[2]
+        #
+        # # We use generalized padding
+        # x = _generalize_padding(x, pad_t, pad_h, pad_w, self.padding_type)
 
         # Step-2: Shift the tensor based on shift window attention.
 
-        if any(i > 0 for i in shift_size):
-            shifted_x = torch.roll(x, shifts=(-shift_size[0], -shift_size[1], -shift_size[2]), dims=(1, 2, 3))
-        else:
-            shifted_x = x
+        # if any(i > 0 for i in shift_size):
+        #     shifted_x = torch.roll(x, shifts=(-shift_size[0], -shift_size[1], -shift_size[2]), dims=(1, 2, 3))
+        # else:
+        #     shifted_x = x
         # Step-3: Reorder the tensor
         # (B, num_cuboids, cuboid_volume, C)
 
         # ######## V1 #######################
-        shifted_x = rearrange(shifted_x, 'b t h w c -> (b t) h w c')
-        shifted_x = self.nattn(shifted_x)
-        shifted_x = rearrange(shifted_x, '(b t) h w c -> b t h w c', b=B)
+        x = rearrange(x, 'b t h w c -> (b t) h w c')
+        x = self.nattn(x)
+        x = rearrange(x, '(b t) h w c -> b t h w c', b=B)
+        a = 1
+        x = rearrange(x, 'b t h w c -> (b h w) t c').unsqueeze(-1)
+        x = self.nattn_tc(x).squeeze(-1)
+        x = rearrange(x, '(b h w) t c -> b t h w c', b=B, h=H)
+        a = 1
 
-        reordered_x = cuboid_reorder(shifted_x, cuboid_size=cuboid_size, strategy=self.strategy)
-        _, num_cuboids, cuboid_volume, _ = reordered_x.shape
-        head_C = C_in // self.num_heads
+
+        # reordered_x = cuboid_reorder(shifted_x, cuboid_size=cuboid_size, strategy=self.strategy)
+        # _, num_cuboids, cuboid_volume, _ = reordered_x.shape
+        # head_C = C_in // self.num_heads
 
         # Step-4: Perform self-attention
         # (num_cuboids, cuboid_volume, cuboid_volume)
 
         # ########## Original Version ########
-        attn_mask = compute_cuboid_self_attention_mask((T, H, W), cuboid_size,
-                                                       shift_size=shift_size,
-                                                       strategy=self.strategy,
-                                                       padding_type=self.padding_type,
-                                                       device=x.device)
-        head_C = C_in // self.num_heads
-        qkv = self.qkv(reordered_x).reshape(B, num_cuboids, cuboid_volume, 3, self.num_heads, head_C)\
-            .permute(3, 0, 4, 1, 2, 5)  # (3, B, num_heads, num_cuboids, cuboid_volume, head_C)
-        q, k, v = qkv[0], qkv[1], qkv[2]  # Each has shape (B, num_heads, num_cuboids, cuboid_volume, head_C)
-        q = q * self.scale
-        attn_score = q @ k.transpose(-2, -1)  # Shape (B, num_heads, num_cuboids, cuboid_volume, cuboid_volume)
-        if self.use_relative_pos:
-            relative_position_bias = self.relative_position_bias_table[
-                self.relative_position_index[:cuboid_volume, :cuboid_volume].reshape(-1)]\
-                .reshape(cuboid_volume, cuboid_volume, -1)  # (cuboid_volume, cuboid_volume, num_head)
-            relative_position_bias = relative_position_bias.permute(2, 0, 1)\
-                .contiguous().unsqueeze(1)  # num_heads, 1, cuboid_volume, cuboid_volume
-            attn_score = attn_score + relative_position_bias  # Shape (B, num_heads, num_cuboids, cuboid_volume, cuboid_volume)
+        # attn_mask = compute_cuboid_self_attention_mask((T, H, W), cuboid_size,
+        #                                                shift_size=shift_size,
+        #                                                strategy=self.strategy,
+        #                                                padding_type=self.padding_type,
+        #                                                device=x.device)
+        # head_C = C_in // self.num_heads
+        # qkv = self.qkv(reordered_x).reshape(B, num_cuboids, cuboid_volume, 3, self.num_heads, head_C)\
+        #     .permute(3, 0, 4, 1, 2, 5)  # (3, B, num_heads, num_cuboids, cuboid_volume, head_C)
+        # q, k, v = qkv[0], qkv[1], qkv[2]  # Each has shape (B, num_heads, num_cuboids, cuboid_volume, head_C)
+        # q = q * self.scale
+        # attn_score = q @ k.transpose(-2, -1)  # Shape (B, num_heads, num_cuboids, cuboid_volume, cuboid_volume)
 
-        # Calculate the local to global attention
-        if self.use_global_vector:
-            global_head_C = self.global_dim_ratio * head_C  # take effect only separate_global_qkv = True
-            if self.separate_global_qkv:
-                l2g_q = self.l2g_q_net(reordered_x)\
-                    .reshape(B, num_cuboids, cuboid_volume, self.num_heads, head_C)\
-                    .permute(0, 3, 1, 2, 4)  # (B, num_heads, num_cuboids, cuboid_volume, head_C)
-                l2g_q = l2g_q * self.scale
-                l2g_global_kv = self.l2g_global_kv_net(global_vectors)\
-                    .reshape(B, 1, num_global, 2, self.num_heads, head_C)\
-                    .permute(3, 0, 4, 1, 2, 5)  # Shape (2, B, num_heads, 1, N, head_C)
-                l2g_global_k, l2g_global_v = l2g_global_kv[0], l2g_global_kv[1]
-                g2l_global_q = self.g2l_global_q_net(global_vectors)\
-                    .reshape(B, num_global, self.num_heads, head_C)\
-                    .permute(0, 2, 1, 3)  # Shape (B, num_heads, N, head_C)
-                g2l_global_q = g2l_global_q * self.scale
-                # g2l_kv = self.g2l_kv_net(reordered_x)\
-                #     .reshape(B, num_cuboids, cuboid_volume, 2, self.num_heads, global_head_C)\
-                #     .permute(3, 0, 4, 1, 2, 5)  # (2, B, num_heads, num_cuboids, cuboid_volume, head_C)
-                # g2l_k, g2l_v = g2l_kv[0], g2l_kv[1]
-                g2l_k = self.g2l_k_net(reordered_x)\
-                    .reshape(B, num_cuboids, cuboid_volume, self.num_heads, head_C)\
-                    .permute(0, 3, 1, 2, 4)  # (B, num_heads, num_cuboids, cuboid_volume, head_C)
-                g2l_v = self.g2l_v_net(reordered_x) \
-                    .reshape(B, num_cuboids, cuboid_volume, self.num_heads, global_head_C) \
-                    .permute(0, 3, 1, 2, 4)  # (B, num_heads, num_cuboids, cuboid_volume, global_head_C)
-                if self.use_global_self_attn:
-                    g2g_global_qkv = self.g2g_global_qkv_net(global_vectors)\
-                    .reshape(B, 1, num_global, 3, self.num_heads, global_head_C)\
-                    .permute(3, 0, 4, 1, 2, 5)  # Shape (2, B, num_heads, 1, N, head_C)
-                    g2g_global_q, g2g_global_k, g2g_global_v = g2g_global_qkv[0], g2g_global_qkv[1], g2g_global_qkv[2]
-                    g2g_global_q = g2g_global_q.squeeze(2) * self.scale
-            else:
-                q_global, k_global, v_global = self.global_qkv(global_vectors)\
-                    .reshape(B, 1, num_global, 3, self.num_heads, head_C)\
-                    .permute(3, 0, 4, 1, 2, 5)  # Shape (3, B, num_heads, 1, N, head_C)
-                q_global = q_global.squeeze(2) * self.scale
-                l2g_q, g2l_k, g2l_v = q, k, v
-                g2l_global_q, l2g_global_k, l2g_global_v = q_global, k_global, v_global
-                if self.use_global_self_attn:
-                    g2g_global_q, g2g_global_k, g2g_global_v = q_global, k_global, v_global
-            l2g_attn_score = l2g_q @ l2g_global_k.transpose(-2, -1)  # Shape (B, num_heads, num_cuboids, cuboid_volume, N)
-            attn_score_l2l_l2g = torch.cat((attn_score, l2g_attn_score),
-                                           dim=-1)  # Shape (B, num_heads, num_cuboids, cuboid_volume, cuboid_volume + N)
-            attn_mask_l2l_l2g = F.pad(attn_mask, (0, num_global), "constant", 1)
-            v_l_g = torch.cat((v, l2g_global_v.expand(B, self.num_heads, num_cuboids, num_global, head_C)),
-                            dim=3)
-            # local to local and global attention
-            attn_score_l2l_l2g = masked_softmax(attn_score_l2l_l2g, mask=attn_mask_l2l_l2g)
-            attn_score_l2l_l2g = self.attn_drop(attn_score_l2l_l2g)  # Shape (B, num_heads, num_cuboids, x_cuboid_volume, mem_cuboid_volume + K))
-            reordered_x = (attn_score_l2l_l2g @ v_l_g).permute(0, 2, 3, 1, 4) \
-                .reshape(B, num_cuboids, cuboid_volume, self.dim)
-            # update global vectors
-            if self.padding_type == 'ignore':
-                g2l_attn_mask = torch.ones((1, T, H, W, 1), device=x.device)
-                if pad_t > 0 or pad_h > 0 or pad_w > 0:
-                    g2l_attn_mask = F.pad(g2l_attn_mask, (0, 0, 0, pad_w, 0, pad_h, 0, pad_t))
-                if any(i > 0 for i in shift_size):
-                    g2l_attn_mask = torch.roll(g2l_attn_mask, shifts=(-shift_size[0], -shift_size[1], -shift_size[2]),
-                                               dims=(1, 2, 3))
-                g2l_attn_mask = g2l_attn_mask.reshape((-1,))
-            else:
-                g2l_attn_mask = None
-            g2l_attn_score = g2l_global_q @ g2l_k.reshape(B, self.num_heads, num_cuboids * cuboid_volume, head_C).transpose(-2, -1)  # Shape (B, num_heads, N, num_cuboids * cuboid_volume)
-            if self.use_global_self_attn:
-                g2g_attn_score = g2g_global_q @ g2g_global_k.squeeze(2).transpose(-2, -1)
-                g2all_attn_score = torch.cat((g2l_attn_score, g2g_attn_score),
-                                             dim=-1)  # Shape (B, num_heads, N, num_cuboids * cuboid_volume + N)
-                if g2l_attn_mask is not None:
-                    g2all_attn_mask = F.pad(g2l_attn_mask, (0, num_global), "constant", 1)
-                else:
-                    g2all_attn_mask = None
-                new_v = torch.cat((g2l_v.reshape(B, self.num_heads, num_cuboids * cuboid_volume, global_head_C),
-                                   g2g_global_v.reshape(B, self.num_heads, num_global, global_head_C)),
-                                  dim=2)
-            else:
-                g2all_attn_score = g2l_attn_score
-                g2all_attn_mask = g2l_attn_mask
-                new_v = g2l_v.reshape(B, self.num_heads, num_cuboids * cuboid_volume, global_head_C)
-            g2all_attn_score = masked_softmax(g2all_attn_score, mask=g2all_attn_mask)
-            g2all_attn_score = self.global_attn_drop(g2all_attn_score)
-            new_global_vector = (g2all_attn_score @ new_v).permute(0, 2, 1, 3).\
-                reshape(B, num_global, self.global_dim_ratio*self.dim)
-        else:
-            attn_score = masked_softmax(attn_score, mask=attn_mask)
-            attn_score = self.attn_drop(attn_score)  # Shape (B, num_heads, num_cuboids, cuboid_volume, cuboid_volume (+ K))
-            reordered_x = (attn_score @ v).permute(0, 2, 3, 1, 4).reshape(B, num_cuboids, cuboid_volume, self.dim)
+        # if self.use_relative_pos:
+        #     relative_position_bias = self.relative_position_bias_table[
+        #         self.relative_position_index[:cuboid_volume, :cuboid_volume].reshape(-1)]\
+        #         .reshape(cuboid_volume, cuboid_volume, -1)  # (cuboid_volume, cuboid_volume, num_head)
+        #     relative_position_bias = relative_position_bias.permute(2, 0, 1)\
+        #         .contiguous().unsqueeze(1)  # num_heads, 1, cuboid_volume, cuboid_volume
+        #     attn_score = attn_score + relative_position_bias  # Shape (B, num_heads, num_cuboids, cuboid_volume, cuboid_volume)
+
+        # attn_score = masked_softmax(attn_score, mask=attn_mask)
+        # attn_score = self.attn_drop(attn_score)  # Shape (B, num_heads, num_cuboids, cuboid_volume, cuboid_volume (+ K))
+        # reordered_x = (attn_score @ v).permute(0, 2, 3, 1, 4).reshape(B, num_cuboids, cuboid_volume, self.dim)
 
         if self.use_final_proj:
-            reordered_x = self.proj_drop(self.proj(reordered_x))
-            if self.use_global_vector:
-                new_global_vector = self.proj_drop(self.global_proj(new_global_vector))
-        # Step-5: Shift back and slice
-        shifted_x = cuboid_reorder_reverse(reordered_x, cuboid_size=cuboid_size, strategy=self.strategy,
-                                           orig_data_shape=(T + pad_t, H + pad_h, W + pad_w))
-        if any(i > 0 for i in shift_size):
-            x = torch.roll(shifted_x, shifts=(shift_size[0], shift_size[1], shift_size[2]), dims=(1, 2, 3))
-        else:
-            x = shifted_x
-        x = _generalize_unpadding(x, pad_t=pad_t, pad_h=pad_h, pad_w=pad_w, padding_type=self.padding_type)
-        if self.use_global_vector:
-            return x, new_global_vector
-        else:
-            return x
+            x = self.proj_drop(self.proj(x))
+            # Step-5: Shift back and slice
+        # shifted_x = cuboid_reorder_reverse(reordered_x, cuboid_size=cuboid_size, strategy=self.strategy,
+        #                                    orig_data_shape=(T + pad_t, H + pad_h, W + pad_w))
+        # if any(i > 0 for i in shift_size):
+        #     x = torch.roll(shifted_x, shifts=(shift_size[0], shift_size[1], shift_size[2]), dims=(1, 2, 3))
+        # else:
+        #     x = shifted_x
+        # x = _generalize_unpadding(x, pad_t=pad_t, pad_h=pad_h, pad_w=pad_w, padding_type=self.padding_type)
+        return x
 
 class StackCuboidSelfAttentionBlock(nn.Module):
     """
@@ -1462,8 +1383,8 @@ class CuboidCrossAttentionLayer(nn.Module):
         if self.cross_last_n_frames is not None:
             cross_last_n_frames = int(min(self.cross_last_n_frames, mem.shape[1]))
             mem = mem[:, -cross_last_n_frames:, ...]
-        if self.use_global_vector:
-            _, num_global, _ = mem_global_vectors.shape
+        # if self.use_global_vector:
+        #     _, num_global, _ = mem_global_vectors.shape
         x = self.norm(x)
         B, T_x, H, W, C_in = x.shape
         B_mem, T_mem, H_mem, W_mem, C_mem = mem.shape
@@ -1524,35 +1445,11 @@ class CuboidCrossAttentionLayer(nn.Module):
             relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous().unsqueeze(1)  # num_heads, 1, x_cuboids_volume, mem_cuboid_volume
             attn_score = attn_score + relative_position_bias  # Shape (B, num_heads, num_cuboids, x_cuboids_volume, mem_cuboid_volume)
 
-        if self.use_global_vector:
-            if self.separate_global_qkv:
-                l2g_q = self.l2g_q_net(reordered_x) \
-                    .reshape(B, num_cuboids, x_cuboid_volume, self.num_heads, head_C) \
-                    .permute(0, 3, 1, 2, 4)  # (B, num_heads, num_cuboids, cuboid_volume, head_C)
-                l2g_q = l2g_q * self.scale
-                l2g_global_kv = self.l2g_global_kv_net(mem_global_vectors) \
-                    .reshape(B, 1, num_global, 2, self.num_heads, head_C) \
-                    .permute(3, 0, 4, 1, 2, 5)  # Shape (2, B, num_heads, 1, N, head_C)
-                l2g_global_k, l2g_global_v = l2g_global_kv[0], l2g_global_kv[1]
-            else:
-                kv_global = self.kv_proj(mem_global_vectors).reshape(B, 1, num_global, 2, self.num_heads, head_C).permute(3, 0, 4, 1, 2, 5)
-                l2g_global_k, l2g_global_v = kv_global[0], kv_global[1]  # Shape (B, num_heads, 1, num_global, head_C)
-                l2g_q = q
-            l2g_attn_score = l2g_q @ l2g_global_k.transpose(-2, -1)  # Shape (B, num_heads, num_cuboids, x_cuboid_volume, num_global)
-            attn_score_l2l_l2g = torch.cat((attn_score, l2g_attn_score),
-                                           dim=-1)
-            attn_mask_l2l_l2g = F.pad(attn_mask, (0, num_global), "constant", 1)  # Shape (num_cuboids, x_cuboid_volume, mem_cuboid_volume + num_global)
-            v_l_g = torch.cat((v, l2g_global_v.expand(B, self.num_heads, num_cuboids, num_global, head_C)),
-                              dim=3)  # Shape (B, num_heads, num_cuboids, mem_cuboid_volume + num_global, head_C)
-            # local to local and global attention
-            attn_score_l2l_l2g = masked_softmax(attn_score_l2l_l2g, mask=attn_mask_l2l_l2g)
-            attn_score_l2l_l2g = self.attn_drop(attn_score_l2l_l2g)  # Shape (B, num_heads, num_cuboids, x_cuboid_volume, mem_cuboid_volume + K))
-            reordered_x = (attn_score_l2l_l2g @ v_l_g).permute(0, 2, 3, 1, 4) \
-                .reshape(B, num_cuboids, x_cuboid_volume, self.dim)
-        else:
-            attn_score = masked_softmax(attn_score, mask=attn_mask)
-            attn_score = self.attn_drop(attn_score)  # Shape (B, num_heads, num_cuboids, x_cuboid_volume, mem_cuboid_volume)
-            reordered_x = (attn_score @ v).permute(0, 2, 3, 1, 4).reshape(B, num_cuboids, x_cuboid_volume, self.dim)
+
+
+        attn_score = masked_softmax(attn_score, mask=attn_mask)
+        attn_score = self.attn_drop(attn_score)  # Shape (B, num_heads, num_cuboids, x_cuboid_volume, mem_cuboid_volume)
+        reordered_x = (attn_score @ v).permute(0, 2, 3, 1, 4).reshape(B, num_cuboids, x_cuboid_volume, self.dim)
         reordered_x = self.proj_drop(self.proj(reordered_x))
         # Step-5: Shift back and slice
         shifted_x = cuboid_reorder_reverse(reordered_x, cuboid_size=x_cuboid_size, strategy=self.strategy,
@@ -2852,7 +2749,7 @@ class CuboidTransformerModel(nn.Module):
                  dec_use_inter_ffn=True,
                  dec_hierarchical_pos_embed=False,
                  # global vectors
-                 num_global_vectors=4,
+                 num_global_vectors=0,
                  use_dec_self_global=True,
                  dec_self_update_global=True,
                  use_dec_cross_global=True,
@@ -3198,21 +3095,21 @@ class CuboidTransformerModel(nn.Module):
         T_out = self.target_shape[0]
         x = self.initial_encoder(x)
         x = self.enc_pos_embed(x)
-        if self.num_global_vectors > 0:
-            init_global_vectors = self.init_global_vectors\
-                .expand(B, self.num_global_vectors, self.global_dim_ratio*self.base_units)
-            mem_l, mem_global_vector_l = self.encoder(x, init_global_vectors)
-        else:
-            mem_l = self.encoder(x)
+        # if self.num_global_vectors > 0:
+        #     init_global_vectors = self.init_global_vectors\
+        #         .expand(B, self.num_global_vectors, self.global_dim_ratio*self.base_units)
+        #     mem_l, mem_global_vector_l = self.encoder(x, init_global_vectors)
+        # else:
+        mem_l = self.encoder(x)
         if verbose:
             for i, mem in enumerate(mem_l):
                 print(f"mem[{i}].shape = {mem.shape}")
         initial_z = self.get_initial_z(final_mem=mem_l[-1],
                                        T_out=T_out)
-        if self.num_global_vectors > 0:
-            dec_out = self.decoder(initial_z, mem_l, mem_global_vector_l)
-        else:
-            dec_out = self.decoder(initial_z, mem_l)
+        # if self.num_global_vectors > 0:
+        #     dec_out = self.decoder(initial_z, mem_l, mem_global_vector_l)
+        # else:
+        dec_out = self.decoder(initial_z, mem_l)
         dec_out = self.final_decoder(dec_out)
         out = self.dec_final_proj(dec_out)
         return out
