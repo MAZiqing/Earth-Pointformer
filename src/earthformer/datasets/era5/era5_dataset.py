@@ -94,7 +94,7 @@ class ERA5DataModule(pl.LightningDataModule):
         super().__init__()
         if root is None:
             from ...config import cfg
-            root = os.path.join(cfg.datasets_dir, "himawari")
+            root = os.path.join(cfg.datasets_dir, "era5")
         self.root = root
         self.val_ratio = val_ratio
         self.seed = seed
