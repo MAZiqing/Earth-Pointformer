@@ -1327,6 +1327,9 @@ class CuboidCrossAttentionLayer(nn.Module):
 
         self._checkpoint_level = checkpoint_level
 
+        self.nattn = NeighborhoodAttention2D(dim=dim, kernel_size=7, dilation=1, num_heads=8)
+        self.nattn_tc = NeighborhoodAttention2D(dim=1, kernel_size=5, dilation=1, num_heads=1)
+
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -1380,85 +1383,97 @@ class CuboidCrossAttentionLayer(nn.Module):
         out
             Output tensor should have shape (B, T, H, W, C_out)
         """
-        if self.cross_last_n_frames is not None:
-            cross_last_n_frames = int(min(self.cross_last_n_frames, mem.shape[1]))
-            mem = mem[:, -cross_last_n_frames:, ...]
+        # if self.cross_last_n_frames is not None:
+        #     cross_last_n_frames = int(min(self.cross_last_n_frames, mem.shape[1]))
+        #     mem = mem[:, -cross_last_n_frames:, ...]
         # if self.use_global_vector:
         #     _, num_global, _ = mem_global_vectors.shape
         x = self.norm(x)
         B, T_x, H, W, C_in = x.shape
         B_mem, T_mem, H_mem, W_mem, C_mem = mem.shape
-        assert T_x < self.max_temporal_relative and T_mem < self.max_temporal_relative
-        cuboid_hw = self.cuboid_hw
-        n_temporal = self.n_temporal
-        shift_hw = self.shift_hw
-        assert B_mem == B and H == H_mem and W == W_mem and C_in == C_mem,\
-            f'Shape of memory and the input tensor does not match. x.shape={x.shape}, mem.shape={mem.shape}'
-        pad_t_mem = (n_temporal - T_mem % n_temporal) % n_temporal
-        pad_t_x = (n_temporal - T_x % n_temporal) % n_temporal
-        pad_h = (cuboid_hw[0] - H % cuboid_hw[0]) % cuboid_hw[0]
-        pad_w = (cuboid_hw[1] - W % cuboid_hw[1]) % cuboid_hw[1]
 
-        # Step-1: Pad the memory and x
-        mem = _generalize_padding(mem, pad_t_mem, pad_h, pad_w, self.padding_type, t_pad_left=True)
-        x = _generalize_padding(x, pad_t_x, pad_h, pad_w, self.padding_type, t_pad_left=False)
+        x_all = torch.cat([x, mem], dim=1)
+        x_all = rearrange(x_all, 'b t h w c -> (b t) h w c')
+        x_all = self.nattn(x_all)
+        x_all = rearrange(x_all, '(b t) h w c -> b t h w c', b=B)
+        # a = 1
+        x_all = rearrange(x_all, 'b t h w c -> (b h w) t c').unsqueeze(-1)
+        x_all = self.nattn_tc(x_all).squeeze(-1)
+        x_all = rearrange(x_all, '(b h w) t c -> b t h w c', b=B, h=H)
 
-        # Step-2: Shift the tensor based on shift window attention.
-        if any(i > 0 for i in shift_hw):
-            shifted_x = torch.roll(x, shifts=(-shift_hw[0], -shift_hw[1]), dims=(2, 3))
-            shifted_mem = torch.roll(mem, shifts=(-shift_hw[0], -shift_hw[1]), dims=(2, 3))
-        else:
-            shifted_x = x
-            shifted_mem = mem
-
-        # Step-3: Reorder the tensors
-        mem_cuboid_size = (mem.shape[1] // n_temporal,) + cuboid_hw
-        x_cuboid_size = (x.shape[1] // n_temporal,) + cuboid_hw
-
-        # Mem shape is (B, num_cuboids, mem_cuboid_volume, C), x shape is (B, num_cuboids, x_cuboid_volume, C)
-        reordered_mem = cuboid_reorder(shifted_mem, cuboid_size=mem_cuboid_size, strategy=self.strategy)
-        reordered_x = cuboid_reorder(shifted_x, cuboid_size=x_cuboid_size, strategy=self.strategy)
-        _, num_cuboids_mem, mem_cuboid_volume, _ = reordered_mem.shape
-        _, num_cuboids, x_cuboid_volume, _ = reordered_x.shape
-        assert num_cuboids_mem == num_cuboids, f'Number of cuboids do not match. num_cuboids={num_cuboids},' \
-                                               f' num_cuboids_mem={num_cuboids_mem}'
-
-        # Step-4: Perform self-attention
-        # (num_cuboids, x_cuboid_volume, mem_cuboid_volume)
-        attn_mask = compute_cuboid_cross_attention_mask(T_x, T_mem, H, W, n_temporal, cuboid_hw, shift_hw,
-                                                        strategy=self.strategy,
-                                                        padding_type=self.padding_type,
-                                                        device=x.device)
-        head_C = C_in // self.num_heads
-
-        # (2, B, num_heads, num_cuboids, mem_cuboid_volume, head_C)
-        kv = self.kv_proj(reordered_mem).reshape(B, num_cuboids, mem_cuboid_volume, 2, self.num_heads, head_C).permute(3, 0, 4, 1, 2, 5)
-        k, v = kv[0], kv[1]  # Each has shape (B, num_heads, num_cuboids, mem_cuboid_volume, head_C)
-        q = self.q_proj(reordered_x).reshape(B, num_cuboids, x_cuboid_volume, self.num_heads, head_C).permute(0, 3, 1, 2, 4)  # Shape (B, num_heads, num_cuboids, x_cuboids_volume, head_C)
-        q = q * self.scale
-        attn_score = q @ k.transpose(-2, -1)  # Shape (B, num_heads, num_cuboids, x_cuboids_volume, mem_cuboid_volume)
-
-        if self.use_relative_pos:
-            relative_position_bias = self.relative_position_bias_table[
-                self.relative_position_index[:x_cuboid_volume, :mem_cuboid_volume].reshape(-1)].reshape(
-                x_cuboid_volume, mem_cuboid_volume, -1)  # (cuboid_volume, cuboid_volume, num_head)
-            relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous().unsqueeze(1)  # num_heads, 1, x_cuboids_volume, mem_cuboid_volume
-            attn_score = attn_score + relative_position_bias  # Shape (B, num_heads, num_cuboids, x_cuboids_volume, mem_cuboid_volume)
-
-
-
-        attn_score = masked_softmax(attn_score, mask=attn_mask)
-        attn_score = self.attn_drop(attn_score)  # Shape (B, num_heads, num_cuboids, x_cuboid_volume, mem_cuboid_volume)
-        reordered_x = (attn_score @ v).permute(0, 2, 3, 1, 4).reshape(B, num_cuboids, x_cuboid_volume, self.dim)
-        reordered_x = self.proj_drop(self.proj(reordered_x))
+        x = x_all[:, -T_x:]
+        # a = 1
+        # assert T_x < self.max_temporal_relative and T_mem < self.max_temporal_relative
+        # cuboid_hw = self.cuboid_hw
+        # n_temporal = self.n_temporal
+        # shift_hw = self.shift_hw
+        # assert B_mem == B and H == H_mem and W == W_mem and C_in == C_mem,\
+        #     f'Shape of memory and the input tensor does not match. x.shape={x.shape}, mem.shape={mem.shape}'
+        # pad_t_mem = (n_temporal - T_mem % n_temporal) % n_temporal
+        # pad_t_x = (n_temporal - T_x % n_temporal) % n_temporal
+        # pad_h = (cuboid_hw[0] - H % cuboid_hw[0]) % cuboid_hw[0]
+        # pad_w = (cuboid_hw[1] - W % cuboid_hw[1]) % cuboid_hw[1]
+        #
+        # # Step-1: Pad the memory and x
+        # mem = _generalize_padding(mem, pad_t_mem, pad_h, pad_w, self.padding_type, t_pad_left=True)
+        # x = _generalize_padding(x, pad_t_x, pad_h, pad_w, self.padding_type, t_pad_left=False)
+        #
+        # # Step-2: Shift the tensor based on shift window attention.
+        # if any(i > 0 for i in shift_hw):
+        #     shifted_x = torch.roll(x, shifts=(-shift_hw[0], -shift_hw[1]), dims=(2, 3))
+        #     shifted_mem = torch.roll(mem, shifts=(-shift_hw[0], -shift_hw[1]), dims=(2, 3))
+        # else:
+        #     shifted_x = x
+        #     shifted_mem = mem
+        #
+        # # Step-3: Reorder the tensors
+        # mem_cuboid_size = (mem.shape[1] // n_temporal,) + cuboid_hw
+        # x_cuboid_size = (x.shape[1] // n_temporal,) + cuboid_hw
+        #
+        # # Mem shape is (B, num_cuboids, mem_cuboid_volume, C), x shape is (B, num_cuboids, x_cuboid_volume, C)
+        # reordered_mem = cuboid_reorder(shifted_mem, cuboid_size=mem_cuboid_size, strategy=self.strategy)
+        # reordered_x = cuboid_reorder(shifted_x, cuboid_size=x_cuboid_size, strategy=self.strategy)
+        # _, num_cuboids_mem, mem_cuboid_volume, _ = reordered_mem.shape
+        # _, num_cuboids, x_cuboid_volume, _ = reordered_x.shape
+        # assert num_cuboids_mem == num_cuboids, f'Number of cuboids do not match. num_cuboids={num_cuboids},' \
+        #                                        f' num_cuboids_mem={num_cuboids_mem}'
+        #
+        # # Step-4: Perform self-attention
+        # # (num_cuboids, x_cuboid_volume, mem_cuboid_volume)
+        # attn_mask = compute_cuboid_cross_attention_mask(T_x, T_mem, H, W, n_temporal, cuboid_hw, shift_hw,
+        #                                                 strategy=self.strategy,
+        #                                                 padding_type=self.padding_type,
+        #                                                 device=x.device)
+        # head_C = C_in // self.num_heads
+        #
+        # # (2, B, num_heads, num_cuboids, mem_cuboid_volume, head_C)
+        # kv = self.kv_proj(reordered_mem).reshape(B, num_cuboids, mem_cuboid_volume, 2, self.num_heads, head_C).permute(3, 0, 4, 1, 2, 5)
+        # k, v = kv[0], kv[1]  # Each has shape (B, num_heads, num_cuboids, mem_cuboid_volume, head_C)
+        # q = self.q_proj(reordered_x).reshape(B, num_cuboids, x_cuboid_volume, self.num_heads, head_C).permute(0, 3, 1, 2, 4)  # Shape (B, num_heads, num_cuboids, x_cuboids_volume, head_C)
+        # q = q * self.scale
+        # attn_score = q @ k.transpose(-2, -1)  # Shape (B, num_heads, num_cuboids, x_cuboids_volume, mem_cuboid_volume)
+        #
+        # if self.use_relative_pos:
+        #     relative_position_bias = self.relative_position_bias_table[
+        #         self.relative_position_index[:x_cuboid_volume, :mem_cuboid_volume].reshape(-1)].reshape(
+        #         x_cuboid_volume, mem_cuboid_volume, -1)  # (cuboid_volume, cuboid_volume, num_head)
+        #     relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous().unsqueeze(1)  # num_heads, 1, x_cuboids_volume, mem_cuboid_volume
+        #     attn_score = attn_score + relative_position_bias  # Shape (B, num_heads, num_cuboids, x_cuboids_volume, mem_cuboid_volume)
+        #
+        #
+        #
+        # attn_score = masked_softmax(attn_score, mask=attn_mask)
+        # attn_score = self.attn_drop(attn_score)  # Shape (B, num_heads, num_cuboids, x_cuboid_volume, mem_cuboid_volume)
+        # reordered_x = (attn_score @ v).permute(0, 2, 3, 1, 4).reshape(B, num_cuboids, x_cuboid_volume, self.dim)
+        x = self.proj_drop(self.proj(x))
         # Step-5: Shift back and slice
-        shifted_x = cuboid_reorder_reverse(reordered_x, cuboid_size=x_cuboid_size, strategy=self.strategy,
-                                           orig_data_shape=(x.shape[1], x.shape[2], x.shape[3]))
-        if any(i > 0 for i in shift_hw):
-            x = torch.roll(shifted_x, shifts=(shift_hw[0], shift_hw[1]), dims=(2, 3))
-        else:
-            x = shifted_x
-        x = _generalize_unpadding(x, pad_t=pad_t_x, pad_h=pad_h, pad_w=pad_w, padding_type=self.padding_type)
+        # shifted_x = cuboid_reorder_reverse(reordered_x, cuboid_size=x_cuboid_size, strategy=self.strategy,
+        #                                    orig_data_shape=(x.shape[1], x.shape[2], x.shape[3]))
+        # if any(i > 0 for i in shift_hw):
+        #     x = torch.roll(shifted_x, shifts=(shift_hw[0], shift_hw[1]), dims=(2, 3))
+        # else:
+        #     x = shifted_x
+        # x = _generalize_unpadding(x, pad_t=pad_t_x, pad_h=pad_h, pad_w=pad_w, padding_type=self.padding_type)
         return x
 
 class DownSampling3D(nn.Module):
