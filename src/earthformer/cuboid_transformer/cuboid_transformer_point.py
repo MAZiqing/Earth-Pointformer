@@ -1392,7 +1392,7 @@ class CuboidCrossAttentionLayer(nn.Module):
         B, T_x, H, W, C_in = x.shape
         B_mem, T_mem, H_mem, W_mem, C_mem = mem.shape
 
-        x_all = torch.cat([x, mem], dim=1)
+        x_all = torch.cat([mem, x], dim=1)
         x_all = rearrange(x_all, 'b t h w c -> (b t) h w c')
         x_all = self.nattn(x_all)
         x_all = rearrange(x_all, '(b t) h w c -> b t h w c', b=B)
